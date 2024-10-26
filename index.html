@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dino Game with Physics</title>
+  <style>
+    canvas {
+      border: 1px solid black;  
+      
+      display: block;
+      margin: 0 auto;
+      background-color: #f0f0f0;
+    }
+    #gameCanvas{
+            position: absolute; /* Use absolute positioning */
+            right: 20px; /* 20 pixels from the right */
+            top: 30%; /* Center it vertically */
+            transform: translateY(-50%); /* Adjust for the canvas height */
+            border: 1px solid black; /* Optional: adds a border for visibility */
+        }
+    #waveCanvas {
+            position: absolute; /* Use absolute positioning */
+            right: 20px; /* 20 pixels from the right */
+            top: 80%; /* Center it vertically */
+            transform: translateY(-50%); /* Adjust for the canvas height */
+            border: 1px solid black; /* Optional: adds a border for visibility */
+        }
+        #canvas3 {
+            position: absolute; /* Use absolute positioning */
+            left: 20px; /* 20 pixels from the right */
+            top: 90%; /* Center it vertically */
+            transform: translateY(-50%); /* Adjust for the canvas height */
+            border: 1px solid black; /* Optional: adds a border for visibility */
+        }
+        #score{
+          position: absolute; /* Use absolute positioning */
+    left: 10px; /* 20 pixels from the left */
+    top: 60%;
+      font-size: 24px;      
+      margin: 10px;
+        }
+
+    #potentiometerValue, #controls {
+      position: absolute; /* Use absolute positioning */
+    left: 10px; /* 20 pixels from the left */
+    top: 70%;
+      font-size: 24px;      
+      margin: 10px;
+     
+    }
+    button, input {
+      padding: 10px 15px;
+      font-size: 16px;
+      margin: 5px;
+      cursor: pointer;
+    }
+    #controls {
+    position: absolute; /* Use absolute positioning */
+    left: 10px; /* 20 pixels from the left */
+    top: 30%; /* Center it vertically */
+    transform: translateY(-50%); /* Adjust for the canvas height */
+    border: 1px solid black; /* Optional: add a border */
+}
+
+button {
+    display: block; /* Make buttons block elements */
+    width: 50%; /* Make buttons full width */
+    margin-bottom: 10px; /* Add space between buttons */
+}
+  
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <button id="startButton">Start</button>
+ 
+    <button id="resumeButton">Resume</button>
+    <button id="restartButton">Restart</button>
+    <button id="stopButton">Stop</button>
+    <button id="calibrateButton">Calibrate</button>
+    <button id="downloadCsvButton" disabled>Download CSV</button>
+    <button id="continueButton" style="display: none;">Continue</button>
+    <label for="obstacleWidthSlider">Obstacle 2 Width: <span id="obstacleWidthValue">160</span></label>
+    <input type="range" id="obstacleWidthSlider" min="50" max="350" value="160">
+  </div>
+
+  <div id="score">Score: 0</div>
+  <canvas id="gameCanvas" width="1000" height="400"></canvas>
+  <div id="potentiometerValue">Potentiometer Value: 0</div>
+  <canvas id="waveCanvas" width="1000" height="350"></canvas>
+  <canvas id="canvas3" width="500" height="200"></canvas>
+
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.5.1/math.min.js"></script>
+
+  
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const waveCanvas = document.getElementById('waveCanvas');
+    const waveCtx = waveCanvas.getContext('2d');
+    const socket = io();
+
+    let characterY = 5;
+    const characterX = 100;
+    let velocityY = 0;
+    const gravity = 0.7;
+    const jumpVelocity = -20;
+    const characterWidth = 50;
+    const characterHeight = 50;
+    let obstacles = [];
+    let obstacles2 = [];
+    let score = 0;
+    let gameOver = false;
+    let gameSpeed = 3;
+    let gameInterval;
+    let obstacleInterval;
+    let potentiometerData = [];
+    let csvData = [];
+    let isPaused = false;
+    let jumpReady = true;
+    let isTouchingObstacle2 = false;
+    let calibrationData = [];
+    let calibrationDuration = 10000; // 10 seconds
+    let calibrationInterval;
+    let calibratedValue = 3; // Default value
+    let obstacle2Width = 160; // Default width
+
+    const groundY = 370;
+
+    const backgroundImage = new Image();
+    backgroundImage.src = './bacround2.jpg';
+
+    const obstacleImage = new Image();
+    obstacleImage.src = './P1.png';
+
+    let imagesLoaded = 0;
+    const totalImages = 2;
+
+    backgroundImage.onload = () => {
+      imagesLoaded++;
+      if (imagesLoaded === totalImages) {
+        console.log('All images loaded.');
+      }
+    };
+
+    obstacleImage.onload = () => {
+      imagesLoaded++;
+      if (imagesLoaded === totalImages) {
+        console.log('All images loaded.');
+      }
+    };
+
+    backgroundImage.onerror = () => {
+      console.error('Failed to load background image.');
+    };
+
+    obstacleImage.onerror = () => {
+      console.error('Failed to load obstacle image.');
+    };
+
+    function createObstacle() {
+    const obstacleHeight = 70;
+    const obstacleWidth = 30; // Width for obstacle1
+    
+    // Create obstacle2 with the dynamic width
+    const obstacle2 = {
+        x: canvas.width,
+        y: groundY - obstacleHeight - 260, // Set Y position for obstacle2
+        width: obstacle2Width, // Use the width from the slider
+        height: 350,
+        speed: gameSpeed
+    };
+    obstacles2.push(obstacle2);
+
+    // Create obstacle1 centered inside obstacle2
+    const obstacle1 = {
+        x: obstacle2.x + (obstacle2.width - obstacleWidth) / 2, // Center it within obstacle2
+        y: groundY - obstacleHeight, // Center it vertically
+        width: obstacleWidth,
+        height: obstacleHeight,
+        speed: gameSpeed
+    };
+    obstacles.push(obstacle1);
+}
+    
+
+    function detectCollision(obstacle) {
+      return (
+        characterX < obstacle.x + obstacle.width &&
+        characterX + characterWidth > obstacle.x &&
+        characterY + characterHeight > obstacle.y &&
+        characterY < obstacle.y + obstacle.height
+      );
+    }
+
+    function detectCollisionObstacle2(obstacle2) {
+      return (
+        characterX < obstacle2.x + obstacle2.width &&
+        characterX + characterWidth > obstacle2.x &&
+        characterY + characterHeight > obstacle2.y &&
+        characterY < obstacle2.y + obstacle2.height
+      );
+    }
+
+    function resetGame() {
+      characterY = groundY - characterHeight;
+      velocityY = 0;
+      obstacles = [];
+      obstacles2 = [];
+      score = 0;
+      gameSpeed = 3;
+      gameOver = false;
+      csvData = [];
+      document.getElementById('score').textContent = 'Score: 0';
+      isPaused = false;
+      isTouchingObstacle2 = false;
+      jumpReady = true;
+      potentiometerData = [];
+      document.getElementById('downloadCsvButton').disabled = true;
+    }
+
+    socket.on('potentiometer-data', (data) => {
+      const asc = potentiometerData; 
+      const potValue = parseFloat(data.trim());
+      potentiometerData.push(potValue);
+
+      if (potentiometerData.length > 800) {
+        potentiometerData.shift();
+      }
+
+      document.getElementById('potentiometerValue').textContent = 'Potentiometer Value: ' + potValue.toFixed(2);
+
+      if (potValue > calibratedValue && jumpReady && !gameOver) {
+        velocityY = jumpVelocity;
+        jumpReady = false;
+      }
+
+      if (potValue <= calibratedValue) {
+        jumpReady = true;
+      }
+
+    if (isTouchingObstacle2 && potValue > calibratedValue) {
+        const timestamp = new Date().toISOString(); // Get the current timestamp
+        lastCsvEntry = `${timestamp},${potValue},${score},${asc}`; // Store last entry for display
+        csvData.push(lastCsvEntry); // Add to csvData
+        document.getElementById('downloadCsvButton').disabled = false;
+    }
+    drawWave();
+
+    drawCanvas3();
+    });
+     
+       
+    const MAX_DATA_POINTS = 100; // Maximum number of data points to display
+const SPACE_BETWEEN_POINTS = 2; // Space between each point
+
+function drawWave() {
+
+    const waveOffset = 200; 
+    const step = 5; // Display a label for every nth data point
+
+    waveCtx.clearRect(0, 0, waveCanvas.width, waveCanvas.height);
+
+    // Draw background grid
+    waveCtx.strokeStyle = 'lightgray';
+    waveCtx.lineWidth = 0.5;
+    for (let i = 0; i < waveCanvas.width; i += 20) {
+        waveCtx.beginPath();
+        waveCtx.moveTo(i, 0);
+        waveCtx.lineTo(i, waveCanvas.height);
+        waveCtx.stroke();
+    }
+    for (let i = 0; i < waveCanvas.height; i += 10) {
+        waveCtx.beginPath();
+        waveCtx.moveTo(0, i);
+        waveCtx.lineTo(waveCanvas.width, i);
+        waveCtx.stroke();
+    }
+
+    // Manage the potentiometer data using FIFO
+    while (potentiometerData.length > MAX_DATA_POINTS) {
+        potentiometerData.shift(); // Remove the oldest data point
+    }
+
+    if (potentiometerData.length > 0) {
+        waveCtx.beginPath();
+        waveCtx.moveTo(0, waveCanvas.height / 2 + waveOffset); // Start from the middle
+
+        const spacing = Math.floor(potentiometerData.length / (waveCanvas.width / (5 * SPACE_BETWEEN_POINTS)));
+
+        let lastX = 0; // Initialize lastX for connecting lines
+        let lastY = waveCanvas.height / 2 + waveOffset; // Initialize lastY for connecting lines
+
+        for (let i = 0; i < potentiometerData.length; i++) {
+            if (i % spacing === 0) { // Only plot every 'spacing' point
+                const x = (i / potentiometerData.length) * waveCanvas.width;
+                let potValue = potentiometerData[i];
+
+                const amplitude = Math.min(potValue - 0, 10);
+                const y = (waveCanvas.height / 2 + waveOffset) - (amplitude / 5) * (waveCanvas.height / 2);
+
+                // Draw lines connecting the points
+                if (i > 0 && i % spacing === 0) {
+                    waveCtx.strokeStyle = 'blue'; // Set line color to blue
+                    waveCtx.lineWidth = 2; // Set line width
+                    waveCtx.beginPath(); // Start a new path for the line
+                    waveCtx.moveTo(lastX, lastY); // Move to the last point
+                    waveCtx.lineTo(x, y); // Draw a line to the current point
+                    waveCtx.stroke(); // Stroke the line
+                }
+
+                // Update lastX and lastY to the current point's coordinates
+                lastX = x;
+                lastY = y;
+
+                // Draw points selectively
+                if (i % step === 0) {
+                    // Draw the circle points
+                    waveCtx.fillStyle = 'red';
+                    waveCtx.beginPath();
+                    waveCtx.arc(x, y, 4, 0, 2 * Math.PI);
+                    waveCtx.fill();
+
+                    // Display the potentiometer value next to the circle point
+                    waveCtx.font = '12px Arial';
+                    waveCtx.fillStyle = 'black';
+                    waveCtx.fillText(potValue.toFixed(2), x + 5, y - 5); // Adjust position to place text slightly away from the point
+                }
+            }
+        }
+
+        // Draw the calibrated mean line
+        waveCtx.strokeStyle = 'green'; // Set line color for calibrated mean line
+        waveCtx.lineWidth = 2;
+        waveCtx.beginPath();
+        for (let i = 0; i < waveCanvas.width; i++) {
+            const adjustedY = (waveCanvas.height / 2 + waveOffset) - (calibratedMean / 5) * (waveCanvas.height / 2);
+            if (i === 0) {
+                waveCtx.moveTo(i, adjustedY);
+            } else {
+                waveCtx.lineTo(i, adjustedY);
+            }
+        }
+        waveCtx.stroke(); // Stroke the calibrated mean line
+
+        // Draw the calibrated standard deviation lines
+        waveCtx.strokeStyle = 'red'; // Set line color for std deviation lines
+
+        // Draw upper std dev line
+        waveCtx.beginPath();
+        for (let i = 0; i < waveCanvas.width; i++) {
+            const adjustedY = (waveCanvas.height / 2 + waveOffset) - ((calibratedMean + calibratedStdDev) / 5) * (waveCanvas.height / 2);
+            if (i === 0) {
+                waveCtx.moveTo(i, adjustedY);
+            } else {
+                waveCtx.lineTo(i, adjustedY);
+            }
+        }
+        waveCtx.stroke(); // Stroke the upper std dev line
+
+        // Draw lower std dev line
+        waveCtx.beginPath();
+        for (let i = 0; i < waveCanvas.width; i++) {
+            const adjustedY = (waveCanvas.height / 2 + waveOffset) - ((calibratedMean - calibratedStdDev) / 5) * (waveCanvas.height / 2);
+            if (i === 0) {
+                waveCtx.moveTo(i, adjustedY);
+            } else {
+                waveCtx.lineTo(i, adjustedY);
+            }
+        }
+        waveCtx.stroke(); // Stroke the lower std dev line
+    }
+}
+const canvas3 = document.getElementById('canvas3');
+const ctx3 = canvas3.getContext('2d');
+
+// Store the last CSV data entry
+let lastCsvEntry = null;
+function drawCanvas3() {
+    ctx3.clearRect(0, 0, canvas3.width, canvas3.height);
+
+    // Display the last CSV entry if available
+    if (lastCsvEntry) {
+        const [, value] = lastCsvEntry.split(',');
+
+        const tableData = [
+            ['Potentiometer Value', value]
+        ];
+
+        const tableX = 10;
+        const tableY = 30;
+        const rowHeight = 30;
+
+        ctx3.fillStyle = 'black';
+        ctx3.font = '16px Arial';
+
+        // Draw table header
+        ctx3.fillText('Data Table', tableX, tableY - 10); // Title
+
+        // Draw table rows
+        tableData.forEach((row, index) => {
+            ctx3.fillText(`${row[0]}: ${row[1]}`, tableX, tableY + index * rowHeight);
+        });
+    }
+}
+
+
+
+
+
+    function gameLoop() {
+      if (isPaused || gameOver) return;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(0, groundY);
+      ctx.lineTo(canvas.width, groundY);
+      ctx.stroke();
+
+      velocityY += gravity;
+      characterY += velocityY;
+
+      if (characterY >= groundY - characterHeight) {
+        characterY = groundY - characterHeight;
+        velocityY = 0;
+      }
+
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const obstacle = obstacles[i];
+        obstacle.x -= obstacle.speed;
+
+        if (detectCollision(obstacle)) {
+          gameOver = true;
+            document.getElementById('continueButton').style.display = 'block'; // Show continue button
+            clearInterval(gameInterval);
+            clearInterval(obstacleInterval);
+            return;
+        }
+
+        if (obstacle.x + obstacle.width < 0) {
+          obstacles.splice(i, 1);
+          score++;
+          document.getElementById('score').textContent = 'Score: ' + score;
+
+          if (score % 10 === 0) {
+            gameSpeed += 1;
+          }
+        } else {
+          ctx.drawImage(obstacleImage, obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+        }
+      }
+
+      for (let j = obstacles2.length - 1; j >= 0; j--) {
+        const obstacle2 = obstacles2[j];
+        obstacle2.x -= obstacle2.speed;
+
+        if (detectCollisionObstacle2(obstacle2)) {
+          isTouchingObstacle2 = true;
+        } else {
+          isTouchingObstacle2 = false;
+        }
+
+        if (obstacle2.x + obstacle2.width < 0) {
+          obstacles2.splice(j, 1);
+        } else {
+          ctx.strokeStyle = 'blue';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(obstacle2.x, obstacle2.y, obstacle2.width, obstacle2.height);
+        }
+      }
+
+      ctx.fillStyle = 'green';
+      ctx.fillRect(characterX, characterY, characterWidth, characterHeight);
+      drawCanvas3();
+    }
+    
+    document.getElementById('continueButton').onclick = () => {
+    if (gameOver) {
+        gameOver = false; // Allow the game to continue
+        document.getElementById('continueButton').style.display = 'none'; // Hide continue button
+        resetGame(); // Reset any necessary states
+        gameInterval = setInterval(gameLoop, 1000 / 60); // Restart game loop
+        obstacleInterval = setInterval(createObstacle, 5000); 
+  // Restart obstacle creation
+    }
+};
+    document.getElementById('startButton').onclick = () => {
+      if (!gameOver && !isPaused) {
+        gameInterval = setInterval(gameLoop, 1000 / 60);
+        obstacleInterval = setInterval(createObstacle, 5000);
+      }
+    };
+
+    document.getElementById('stopButton').onclick = () => {
+      isPaused = true;
+      clearInterval(gameInterval);
+      clearInterval(obstacleInterval);
+    };
+
+    document.getElementById('resumeButton').onclick = () => {
+      if (!gameOver) {
+        isPaused = false;
+        gameInterval = setInterval(gameLoop, 1000 / 60);
+        obstacleInterval = setInterval(createObstacle, 5000);
+      }
+    };
+
+    document.getElementById('restartButton').onclick = () => {
+      resetGame();
+      clearInterval(gameInterval);
+      clearInterval(obstacleInterval);
+      gameInterval = setInterval(gameLoop, 1000 / 60);
+      obstacleInterval = setInterval(createObstacle, 5000);
+    };
+
+  
+    document.getElementById('calibrateButton').onclick = () => {
+    calibrationData = []; // Reset calibration data
+    let calibrationStartTime = Date.now();
+
+    calibrationInterval = setInterval(() => {
+        const potValue = parseFloat(document.getElementById('potentiometerValue').textContent.split(': ')[1]);
+        calibrationData.push(potValue);
+
+        if (Date.now() - calibrationStartTime >= calibrationDuration) {
+            clearInterval(calibrationInterval);
+            calibratedMean = calculateMean(calibrationData);
+            calibratedStdDev = calculateStandardDeviation(calibrationData, calibratedMean);
+            calibratedValue = calibratedMean; // Update the calibrated value
+            alert(`Calibration complete! Mean: ${calibratedMean.toFixed(2)}, Standard Deviation: ${calibratedStdDev.toFixed(2)}`);
+        }
+    }, 100); // Collect data every 100ms
+};
+
+    function calculateMean(data) {
+      const sum = data.reduce((a, b) => a + b, 0);
+      return sum / data.length;
+    }
+
+    function calculateStandardDeviation(data, mean) {
+      const variance = data.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / data.length;
+      return Math.sqrt(variance);
+    }
+    document.getElementById('obstacleWidthSlider').addEventListener('input', function() {
+    obstacle2Width = this.value;  
+    document.getElementById('obstacleWidthValue').textContent = obstacle2Width;  
+
+    // Re-center obstacle1 within the new obstacle2 width
+    if (obstacles2.length > 0) {
+        const obstacle2 = obstacles2[obstacles2.length - 1]; // Get the last created obstacle2
+        obstacle2.width = obstacle2Width; // Update width
+
+        // Update obstacle1 position
+        const obstacle1 = obstacles[obstacles.length - 1]; // Get the last created obstacle1
+        obstacle1.x = obstacle2.x + (obstacle2.width - obstacleWidth) / 2; // Center it within the new width
+    }
+});
+
+    document.getElementById('downloadCsvButton').onclick = () => {
+    if (csvData.length > 0) {
+        const csvContent = "data:text/csv;charset=utf-8," + "Timestamp,Live Potentiometer Value,Score,Obstacle Type\n" + csvData.join("\n");
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "potentiometer_data.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+};
+    
+  </script>
+</body>
+</html>

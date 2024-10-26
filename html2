@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dino Game</title>
+  <style>
+    canvas {
+      border: 1px solid black;
+      display: block;
+      margin: 0 auto;
+      background-color: #f0f0f0;
+    }
+    #score, #potentiometerValue, #controls {
+      font-size: 24px;
+      text-align: center;
+      margin: 10px;
+    }
+    button, input {
+      padding: 10px 15px;
+      font-size: 16px;
+      margin: 5px;
+      cursor: pointer;
+    }
+    #controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    #rangeControls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    #stopButton {
+      margin-left: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <button id="startButton">Start</button>
+    <button id="stopButton">Stop</button>
+    <button id="resumeButton">Resume</button>
+    <button id="restartButton">Restart</button>
+  </div>
+  
+  <!-- New section for setting range -->
+  <div id="rangeControls">
+    <label for="minRange">Min Range: </label>
+    <input type="number" id="minRange" value="20">
+    <label for="maxRange">Max Range: </label>
+    <input type="number" id="maxRange" value="100">
+    <button id="setRangeButton">Set Range</button>
+  </div>
+
+  <div id="score">Score: 0</div>
+  <canvas id="gameCanvas" width="800" height="400"></canvas>
+  <div id="potentiometerValue">Potentiometer Value: 0</div>
+  <canvas id="waveCanvas" width="800" height="200"></canvas>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const waveCanvas = document.getElementById('waveCanvas');
+    const waveCtx = waveCanvas.getContext('2d');
+    const socket = io();
+
+    let characterY = 350;
+    const characterX = 100;
+    const gravity = 1;
+    const jumpHeight = 15;
+    let jump = false;
+    let obstacles = [];
+    let score = 0;
+    let gameOver = false;
+    let gameInterval;
+    let timerInterval;
+    let potentiometerData = [];
+    let isPaused = false; // Track pause state
+
+    // New variables for range limiting the jump
+    let rangeMin = 20;
+    let rangeMax = 100;
+    let jumpReady = true;  // Flag to indicate when a new jump can be triggered
+
+    // Function to generate obstacles
+    function createObstacle() {
+      const obstacle = {
+        x: canvas.width,
+        y: 350,
+        width: 30,
+        height: 50
+      };
+      obstacles.push(obstacle);
+    }
+
+    // Listen to potentiometer data from server
+    socket.on('potentiometer-data', (data) => {
+      const potValue = parseInt(data.trim());
+      potentiometerData.push(potValue);
+
+      // Keep only the last 800 potentiometer data points for the wave
+      if (potentiometerData.length > 800) {
+        potentiometerData.shift();
+      }
+
+      // Update potentiometer value display
+      document.getElementById('potentiometerValue').textContent = 'Potentiometer Value: ' + potValue;
+
+      // Check if the potentiometer value is within the specified range for jump
+      if (potValue >= rangeMin && potValue <= rangeMax && jumpReady && !jump && !gameOver) {
+        jump = true;
+        jumpReady = false;  // Disable jump until the value goes outside the range
+      }
+
+      // Check if potentiometer value goes outside the range, enabling jump again
+      if (potValue < rangeMin || potValue > rangeMax) {
+        jumpReady = true;  // Re-enable jump when pot value leaves the range
+      }
+
+      drawWave(); // Call function to draw the wave
+    });
+
+    // Function to detect collision
+    function detectCollision(obstacle) {
+      return (
+        characterX < obstacle.x + obstacle.width &&
+        characterX + 50 > obstacle.x &&
+        characterY + 50 > obstacle.y
+      );
+    }
+
+    function resetGame() {
+      characterY = 350;
+      obstacles = [];
+      score = 0;
+      gameOver = false;
+      document.getElementById('score').textContent = 'Score: 0';
+      clearInterval(gameInterval);
+      clearInterval(timerInterval);
+      isPaused = false; // Reset pause state
+    }
+
+    function gameLoop() {
+      if (isPaused || gameOver) return; // Pause the game if isPaused is true
+
+      // Clear the canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Character jump logic
+      if (jump) {
+        characterY -= jumpHeight;
+        if (characterY <= 250) {
+          jump = false;
+        }
+      } else if (characterY < 350) {
+        characterY += gravity;
+      }
+
+      // Move obstacles
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const obstacle = obstacles[i];
+        obstacle.x -= 3; // Slow down obstacle movement
+
+        // Check for collision
+        if (detectCollision(obstacle)) {
+          gameOver = true;
+          clearInterval(gameInterval);
+          clearInterval(timerInterval);
+          alert('Game Over! Refresh to play again.');
+          return;
+        }
+
+        // Remove off-screen obstacles
+        if (obstacle.x + obstacle.width < 0) {
+          obstacles.splice(i, 1);
+          score++;
+          document.getElementById('score').textContent = 'Score: ' + score;
+        } else {
+          // Draw the obstacle
+          ctx.fillStyle = 'red';
+          ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+        }
+      }
+
+      // Draw character (a simple square)
+      ctx.fillStyle = 'green';
+      ctx.fillRect(characterX, characterY, 50, 50);
+
+      // Request the next frame
+      requestAnimationFrame(gameLoop);
+    }
+
+    function startGame() {
+      resetGame(); // Reset game state
+      gameInterval = setInterval(createObstacle, 2000); // Create an obstacle every 2 seconds
+      timerInterval = setInterval(() => {
+        if (!gameOver) {
+          score++;
+          document.getElementById('score').textContent = 'Score: ' + score;
+        }
+      }, 1000); // Increase score every second
+      isPaused = false; // Reset paused state if it was paused before
+      gameLoop();
+    }
+
+    function stopGame() {
+      isPaused = true; // Set paused state to true
+    }
+
+    function resumeGame() {
+      if (isPaused && !gameOver) {
+        isPaused = false; // Resume game if paused
+        gameLoop(); // Continue the game loop
+      }
+    }
+
+    // Drawing the wave as before...
+    function drawWave() {
+      // Clear the wave canvas
+      waveCtx.clearRect(0, 0, waveCanvas.width, waveCanvas.height);
+
+      // Draw the wave
+      waveCtx.beginPath();
+      waveCtx.moveTo(0, waveCanvas.height / 2); // Start at the center vertically
+
+      // Draw wave based on potentiometer data
+      for (let i = 0; i < potentiometerData.length; i++) {
+        const x = (i / potentiometerData.length) * waveCanvas.width; // Scale to canvas width
+        const y = (waveCanvas.height / 2) - (potentiometerData[i] * 4); // Adjust height based on potentiometer data
+        waveCtx.lineTo(x, y);
+      }
+      waveCtx.strokeStyle = 'blue';
+      waveCtx.stroke();
+
+      // Draw x-axis
+      waveCtx.beginPath();
+      waveCtx.moveTo(0, waveCanvas.height / 2);
+      waveCtx.lineTo(waveCanvas.width, waveCanvas.height / 2);
+      waveCtx.strokeStyle = 'black';
+      waveCtx.stroke();
+
+      // Draw y-axis
+      waveCtx.beginPath();
+      waveCtx.moveTo(waveCanvas.width / 2, 0);
+      waveCtx.lineTo(waveCanvas.width / 2, waveCanvas.height);
+      waveCtx.strokeStyle = 'black';
+      waveCtx.stroke();
+
+      // Add x-axis label
+      waveCtx.font = '16px Arial';
+      waveCtx.fillStyle = 'black';
+      waveCtx.fillText('Time', waveCanvas.width - 50, waveCanvas.height / 2 + 20);
+
+      requestAnimationFrame(drawWave); // Call the function recursively to keep updating the wave
+    }
+
+    // Add event listeners for buttons
+    document.getElementById('startButton').addEventListener('click', startGame);
+    document.getElementById('stopButton').addEventListener('click', stopGame);
+    document.getElementById('resumeButton').addEventListener('click', resumeGame);
+    document.getElementById('restartButton').addEventListener('click', startGame);
+
+    // Add event listener for setting range
+    document.getElementById('setRangeButton').addEventListener('click', () => {
+      const min = document.getElementById('minRange').value;
+      const max = document.getElementById('maxRange').value;
+      rangeMin = parseInt(min, 10);
+      rangeMax = parseInt(max, 10);
+      alert(`Range set to Min: ${rangeMin}, Max: ${rangeMax}`);
+    });
+  </script>
+</body>
+</html>
